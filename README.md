@@ -102,6 +102,7 @@ The workflow templates in this repository are sanitized. After importing into n8
 Start local n8n and Postgres:
 
 ```bash
+cp docker-compose.example.yml docker-compose.yml
 docker compose up -d
 ```
 
@@ -157,6 +158,10 @@ Postgres
 n8n
 Caddy HTTPS reverse proxy
 ```
+
+The live `docker-compose.yml` files are ignored by Git. Start from the tracked
+`docker-compose.example.yml` templates, then edit the local copies only on the
+machine where they run.
 
 ## Security Checklist Before GitHub
 

@@ -118,7 +118,7 @@ workflows/telegram_alert_formatter_n8n.js
 
 Production deployment files:
 
-- `deploy/droplet/docker-compose.yml`
+- `deploy/droplet/docker-compose.example.yml`
 - `deploy/droplet/Caddyfile`
 - `deploy/droplet/.env.example`
 - `deploy/droplet/backup.sh`

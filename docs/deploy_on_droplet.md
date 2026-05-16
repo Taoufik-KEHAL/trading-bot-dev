@@ -60,6 +60,7 @@ On the droplet:
 ```bash
 cd /opt/trading-bot/droplet
 cp .env.example .env
+cp docker-compose.example.yml docker-compose.yml
 ```
 
 Edit `.env`:
