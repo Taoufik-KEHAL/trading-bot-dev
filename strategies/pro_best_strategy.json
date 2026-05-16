@@ -1,0 +1,39 @@
+{
+  "selected_strategy": "trend_pullback_4h_sl1.8_rr1.5_hold12_rsi35-65",
+  "candidate": {
+    "family": "trend_pullback",
+    "timeframe": "4h",
+    "stop_atr": 1.8,
+    "reward_risk": 1.5,
+    "max_hold_bars": 12,
+    "ema_fast": 50,
+    "ema_slow": 200,
+    "lookback": 0,
+    "vol_mult": 1.0,
+    "bb_window": 0,
+    "z_entry": 0.0,
+    "rsi_low": 35.0,
+    "rsi_high": 65.0,
+    "trend_band": 0.0
+  },
+  "symbols": [
+    "ADAUSDT",
+    "AVAXUSDT",
+    "BNBUSDT",
+    "BTCUSDT",
+    "DOGEUSDT",
+    "DOTUSDT",
+    "ETHUSDT",
+    "LINKUSDT",
+    "SOLUSDT",
+    "XRPUSDT"
+  ],
+  "timeframe": "4h",
+  "round_trip_cost_bps": 10.0,
+  "capital_fraction_per_trade": 0.1,
+  "train_fraction": 0.7,
+  "data_start": "2025-05-16T17:12:00",
+  "data_end": "2026-05-16T18:18:00",
+  "split_time": "2026-01-27T05:58:00",
+  "selection_note": "Shortlisted by in-sample score, selected by out-of-sample score. Use paper trading before any live exchange integration."
+}

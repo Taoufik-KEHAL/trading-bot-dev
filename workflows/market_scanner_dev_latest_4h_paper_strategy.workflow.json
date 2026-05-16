@@ -1,0 +1,161 @@
+{
+  "name": "Market Scanner DEV - Latest 4h Paper Strategy",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 15
+            }
+          ]
+        }
+      },
+      "id": "11311db6-6e5a-4c4e-84d1-7b7913977239",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        -920,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "/**\n * n8n Code node: build Binance kline HTTP requests.\n *\n * Code node mode: Run Once for All Items\n *\n * Next node:\n *   HTTP Request\n *   Method: GET\n *   URL: ={{$json.url}}\n *   Response format: JSON\n *\n * Your n8n version may split Binance's top-level array response into 300\n * items per symbol. That is okay: the paper-trader Code node regroups the\n * 3000 rows back into the original 10 symbols.\n *\n * Binance docs:\n *   GET /api/v3/klines\n *   Required params: symbol, interval\n *   limit max: 1000\n */\n\nconst SYMBOLS = [\n  \"ADAUSDT\",\n  \"AVAXUSDT\",\n  \"BNBUSDT\",\n  \"BTCUSDT\",\n  \"DOGEUSDT\",\n  \"DOTUSDT\",\n  \"ETHUSDT\",\n  \"LINKUSDT\",\n  \"SOLUSDT\",\n  \"XRPUSDT\",\n];\n\nconst BASE_URL = \"https://data-api.binance.vision/api/v3/klines\";\nconst INTERVAL = \"4h\";\nconst LIMIT = 300;\n\nreturn SYMBOLS.map((symbol) => ({\n  json: {\n    symbol,\n    interval: INTERVAL,\n    limit: LIMIT,\n    url: `${BASE_URL}?symbol=${symbol}&interval=${INTERVAL}&limit=${LIMIT}`,\n  },\n}));\n"
+      },
+      "id": "c1b05428-da37-4303-860a-f071847711d7",
+      "name": "Build Binance requests",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -700,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{$json.url}}",
+        "options": {}
+      },
+      "id": "2069ca30-0926-4d34-893e-4e4ccbe90631",
+      "name": "HTTP Request",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -480,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "/**\n * n8n Code node: strategy + paper trading from Binance 4h klines.\n *\n * Code node mode: Run Once for All Items\n *\n * Expected input from previous HTTP Request node:\n * {\n *   symbol: \"BTCUSDT\",\n *   interval: \"4h\",\n *   klines: [\n *     [\n *       1499040000000, \"0.01634790\", \"0.80000000\", \"0.01575800\",\n *       \"0.01577100\", \"148976.11427815\", 1499644799999, ...\n *     ]\n *   ]\n * }\n *\n * This is paper trading only. It does not call Binance order endpoints.\n */\n\nconst RESET_PAPER_STATE = false;\n\nconst STRATEGY = {\n  name: \"trend_pullback_4h_sl1.8_rr1.5_hold12_rsi35-65\",\n  timeframe: \"4h\",\n  timeframeMs: 4 * 60 * 60 * 1000,\n  emaFast: 50,\n  emaSlow: 200,\n  rsiPeriod: 14,\n  atrPeriod: 14,\n  rsiLow: 35,\n  rsiHigh: 65,\n  stopAtr: 1.8,\n  rewardRisk: 1.5,\n  maxHoldBars: 12,\n};\n\nconst PAPER = {\n  initialCashUsdt: 10000,\n  tradeNotionalFraction: 0.10,\n  maxTradeNotionalUsdt: 1000,\n  maxOpenPositions: 3,\n  feeRatePerSide: 0.0005,\n  allowPaperShorts: true,\n};\n\nconst SYMBOLS = [\n  \"ADAUSDT\",\n  \"AVAXUSDT\",\n  \"BNBUSDT\",\n  \"BTCUSDT\",\n  \"DOGEUSDT\",\n  \"DOTUSDT\",\n  \"ETHUSDT\",\n  \"LINKUSDT\",\n  \"SOLUSDT\",\n  \"XRPUSDT\",\n];\n\nconst EXPECTED_KLINES_PER_SYMBOL = 300;\n\nfunction safeNumber(value) {\n  const number = Number(value);\n  return Number.isFinite(number) ? number : null;\n}\n\nfunction round(value, decimals = 8) {\n  if (value === null || value === undefined || !Number.isFinite(value)) return null;\n  return Number(value.toFixed(decimals));\n}\n\nfunction iso(timestampMs) {\n  return new Date(timestampMs).toISOString().replace(\".000Z\", \"Z\");\n}\n\nfunction getKlinesFromItem(item) {\n  const json = item.json || item;\n  const symbol = String(json.symbol || \"\").toUpperCase();\n  let klines = json.klines ?? json.body ?? json.data ?? json.response;\n\n  if (typeof klines === \"string\") {\n    klines = JSON.parse(klines);\n  }\n\n  if (!Array.isArray(klines)) {\n    throw new Error(`No Binance kline array found for ${symbol || \"unknown symbol\"}`);\n  }\n\n  return { symbol, klines };\n}\n\nfunction isSplitKlineRow(json) {\n  return (\n    json &&\n    safeNumber(json[0]) !== null &&\n    safeNumber(json[1]) !== null &&\n    safeNumber(json[2]) !== null &&\n    safeNumber(json[3]) !== null &&\n    safeNumber(json[4]) !== null &&\n    safeNumber(json[5]) !== null &&\n    safeNumber(json[6]) !== null\n  );\n}\n\nfunction splitKlineJsonToArray(json) {\n  return [\n    json[0],\n    json[1],\n    json[2],\n    json[3],\n    json[4],\n    json[5],\n    json[6],\n    json[7],\n    json[8],\n    json[9],\n    json[10],\n    json[11],\n  ];\n}\n\nfunction normalizeInputItems(inputItems) {\n  const grouped = [];\n  const splitRows = [];\n\n  for (const item of inputItems) {\n    const json = item.json || item;\n    const symbol = String(json.symbol || \"\").toUpperCase();\n    const maybeKlines = json.klines ?? json.body ?? json.data ?? json.response;\n\n    if (symbol && Array.isArray(maybeKlines)) {\n      grouped.push({ symbol, klines: maybeKlines });\n      continue;\n    }\n\n    if (isSplitKlineRow(json)) {\n      splitRows.push(splitKlineJsonToArray(json));\n    }\n  }\n\n  if (grouped.length > 0) return grouped;\n  if (splitRows.length === 0) return [];\n\n  // Fallback for an HTTP Request node that split Binance's array response into\n  // 3000 separate items. This assumes the requests were generated in SYMBOLS\n  // order and each symbol returned EXPECTED_KLINES_PER_SYMBOL rows.\n  const fallbackGroups = [];\n  for (let i = 0; i < SYMBOLS.length; i += 1) {\n    const start = i * EXPECTED_KLINES_PER_SYMBOL;\n    const end = start + EXPECTED_KLINES_PER_SYMBOL;\n    const klines = splitRows.slice(start, end);\n    if (klines.length > 0) {\n      fallbackGroups.push({ symbol: SYMBOLS[i], klines });\n    }\n  }\n\n  return fallbackGroups;\n}\n\nfunction parseBinanceKlines(rawKlines) {\n  return rawKlines\n    .map((kline) => ({\n      openTime: safeNumber(kline[0]),\n      open: safeNumber(kline[1]),\n      high: safeNumber(kline[2]),\n      low: safeNumber(kline[3]),\n      close: safeNumber(kline[4]),\n      volume: safeNumber(kline[5]),\n      closeTime: safeNumber(kline[6]),\n    }))\n    .filter(\n      (bar) =>\n        bar.openTime !== null &&\n        bar.open !== null &&\n        bar.high !== null &&\n        bar.low !== null &&\n        bar.close !== null &&\n        bar.volume !== null &&\n        bar.closeTime !== null\n    )\n    .sort((a, b) => a.openTime - b.openTime);\n}\n\nfunction completeBarsOnly(bars) {\n  const now = Date.now();\n  return bars.filter((bar) => bar.closeTime < now);\n}\n\nfunction ema(values, span) {\n  const out = Array(values.length).fill(null);\n  const alpha = 2 / (span + 1);\n  let current = null;\n\n  for (let i = 0; i < values.length; i += 1) {\n    const value = values[i];\n    current = current === null ? value : alpha * value + (1 - alpha) * current;\n    if (i >= span - 1) out[i] = current;\n  }\n\n  return out;\n}\n\nfunction wilderAverage(values, period) {\n  const out = Array(values.length).fill(null);\n  let current = null;\n\n  for (let i = 0; i < values.length; i += 1) {\n    const value = values[i];\n    if (!Number.isFinite(value)) continue;\n    current = current === null ? value : (current * (period - 1) + value) / period;\n    if (i >= period - 1) out[i] = current;\n  }\n\n  return out;\n}\n\nfunction rsi(closes, period) {\n  const gains = Array(closes.length).fill(null);\n  const losses = Array(closes.length).fill(null);\n\n  for (let i = 1; i < closes.length; i += 1) {\n    const diff = closes[i] - closes[i - 1];\n    gains[i] = Math.max(diff, 0);\n    losses[i] = Math.max(-diff, 0);\n  }\n\n  const avgGain = wilderAverage(gains, period);\n  const avgLoss = wilderAverage(losses, period);\n  const out = Array(closes.length).fill(null);\n\n  for (let i = 0; i < closes.length; i += 1) {\n    if (avgGain[i] === null || avgLoss[i] === null) continue;\n    out[i] = avgLoss[i] === 0 ? 100 : 100 - 100 / (1 + avgGain[i] / avgLoss[i]);\n  }\n\n  return out;\n}\n\nfunction atr(bars, period) {\n  const trueRanges = Array(bars.length).fill(null);\n\n  for (let i = 0; i < bars.length; i += 1) {\n    if (i === 0) {\n      trueRanges[i] = bars[i].high - bars[i].low;\n      continue;\n    }\n\n    const prevClose = bars[i - 1].close;\n    trueRanges[i] = Math.max(\n      bars[i].high - bars[i].low,\n      Math.abs(bars[i].high - prevClose),\n      Math.abs(bars[i].low - prevClose)\n    );\n  }\n\n  return wilderAverage(trueRanges, period);\n}\n\nfunction buildSignal(symbol, bars) {\n  const completed = completeBarsOnly(bars);\n  if (completed.length < STRATEGY.emaSlow + 2) {\n    return {\n      symbol,\n      strategy: STRATEGY.name,\n      timeframe: STRATEGY.timeframe,\n      signal: \"HOLD\",\n      actionable: false,\n      reason: `Need at least ${STRATEGY.emaSlow + 2} complete 4h bars`,\n    };\n  }\n\n  const closes = completed.map((bar) => bar.close);\n  const emaFast = ema(closes, STRATEGY.emaFast);\n  const emaSlow = ema(closes, STRATEGY.emaSlow);\n  const rsi14 = rsi(closes, STRATEGY.rsiPeriod);\n  const atr14 = atr(completed, STRATEGY.atrPeriod);\n  const idx = completed.length - 1;\n  const bar = completed[idx];\n  const previousRsi = rsi14[idx - 1];\n  const currentRsi = rsi14[idx];\n  const currentEmaFast = emaFast[idx];\n  const currentEmaSlow = emaSlow[idx];\n  const currentAtr = atr14[idx];\n\n  if (\n    previousRsi === null ||\n    currentRsi === null ||\n    currentEmaFast === null ||\n    currentEmaSlow === null ||\n    currentAtr === null ||\n    currentAtr <= 0\n  ) {\n    return {\n      symbol,\n      strategy: STRATEGY.name,\n      timeframe: STRATEGY.timeframe,\n      bar_time: iso(bar.openTime),\n      close_price: round(bar.close),\n      signal: \"HOLD\",\n      actionable: false,\n      reason: \"Indicators are still warming up\",\n    };\n  }\n\n  const longSignal =\n    currentEmaFast > currentEmaSlow &&\n    bar.close > currentEmaSlow &&\n    previousRsi < STRATEGY.rsiLow &&\n    currentRsi >= STRATEGY.rsiLow;\n\n  const shortSignal =\n    currentEmaFast < currentEmaSlow &&\n    bar.close < currentEmaSlow &&\n    previousRsi > STRATEGY.rsiHigh &&\n    currentRsi <= STRATEGY.rsiHigh;\n\n  let signal = \"HOLD\";\n  let side = null;\n  let stopLoss = null;\n  let takeProfit = null;\n  let score = 0;\n\n  if (longSignal) {\n    signal = \"BUY\";\n    side = \"LONG\";\n    const risk = currentAtr * STRATEGY.stopAtr;\n    stopLoss = bar.close - risk;\n    takeProfit = bar.close + risk * STRATEGY.rewardRisk;\n    score = Math.abs(currentRsi - STRATEGY.rsiLow);\n  }\n\n  if (shortSignal) {\n    signal = \"SELL\";\n    side = \"SHORT\";\n    const risk = currentAtr * STRATEGY.stopAtr;\n    stopLoss = bar.close + risk;\n    takeProfit = bar.close - risk * STRATEGY.rewardRisk;\n    score = Math.abs(currentRsi - STRATEGY.rsiHigh);\n  }\n\n  return {\n    symbol,\n    strategy: STRATEGY.name,\n    timeframe: STRATEGY.timeframe,\n    bar_time: iso(bar.openTime),\n    bar_open_time_ms: bar.openTime,\n    bar_close_time: iso(bar.closeTime),\n    close_price: round(bar.close),\n    high_price: round(bar.high),\n    low_price: round(bar.low),\n    rsi: round(currentRsi, 4),\n    ema50: round(currentEmaFast),\n    ema200: round(currentEmaSlow),\n    atr14: round(currentAtr),\n    signal,\n    side,\n    actionable: signal !== \"HOLD\",\n    score: round(score, 4),\n    stop_loss_price: round(stopLoss),\n    take_profit_price: round(takeProfit),\n    max_hold_bars: STRATEGY.maxHoldBars,\n    max_hold_hours: STRATEGY.maxHoldBars * 4,\n    reason:\n      signal === \"HOLD\"\n        ? \"No entry: waiting for EMA trend + RSI pullback cross\"\n        : `${signal}: EMA trend confirmed and RSI crossed pullback threshold`,\n  };\n}\n\nfunction initState(staticData) {\n  if (RESET_PAPER_STATE || !staticData.paperTradingBinanceV1) {\n    staticData.paperTradingBinanceV1 = {\n      version: 1,\n      strategy: STRATEGY.name,\n      cashUsdt: PAPER.initialCashUsdt,\n      positions: {},\n      trades: [],\n      events: [],\n      lastProcessedBarBySymbol: {},\n      createdAt: new Date().toISOString(),\n    };\n  }\n\n  const state = staticData.paperTradingBinanceV1;\n  state.positions ||= {};\n  state.trades ||= [];\n  state.events ||= [];\n  state.lastProcessedBarBySymbol ||= {};\n  return state;\n}\n\nfunction positionPnlUsdt(position, markPrice) {\n  if (!position || !Number.isFinite(markPrice) || markPrice <= 0) return 0;\n  const direction = position.side === \"LONG\" ? 1 : -1;\n  return direction * ((markPrice / position.entry_price) - 1) * position.notional_usdt;\n}\n\nfunction closePosition(state, position, exitPrice, exitTime, exitReason) {\n  const grossPnlUsdt = positionPnlUsdt(position, exitPrice);\n  const closeFeeUsdt = Math.abs(position.quantity * exitPrice) * PAPER.feeRatePerSide;\n  const netPnlUsdt = grossPnlUsdt - closeFeeUsdt;\n  state.cashUsdt += netPnlUsdt;\n\n  const trade = {\n    type: \"trade_closed\",\n    symbol: position.symbol,\n    strategy: position.strategy,\n    side: position.side,\n    entry_time: position.entry_time,\n    exit_time: exitTime,\n    entry_price: round(position.entry_price),\n    exit_price: round(exitPrice),\n    quantity: round(position.quantity),\n    notional_usdt: round(position.notional_usdt, 2),\n    open_fee_usdt: round(position.open_fee_usdt, 4),\n    close_fee_usdt: round(closeFeeUsdt, 4),\n    gross_pnl_usdt: round(grossPnlUsdt, 4),\n    net_pnl_usdt: round(netPnlUsdt, 4),\n    pnl_percent_on_notional: round((netPnlUsdt / position.notional_usdt) * 100, 4),\n    exit_reason: exitReason,\n  };\n\n  delete state.positions[position.symbol];\n  state.trades.push(trade);\n  state.events.push({ ...trade, event_time: new Date().toISOString() });\n  return trade;\n}\n\nfunction openPosition(state, signal, equityUsdt) {\n  const openPositions = Object.values(state.positions);\n  if (openPositions.length >= PAPER.maxOpenPositions) {\n    return {\n      type: \"entry_skipped\",\n      symbol: signal.symbol,\n      signal: signal.signal,\n      reason: `Max open positions reached: ${PAPER.maxOpenPositions}`,\n    };\n  }\n\n  if (signal.side === \"SHORT\" && !PAPER.allowPaperShorts) {\n    return {\n      type: \"entry_skipped\",\n      symbol: signal.symbol,\n      signal: signal.signal,\n      reason: \"Paper shorts disabled\",\n    };\n  }\n\n  const usedNotional = openPositions.reduce((sum, position) => sum + position.notional_usdt, 0);\n  const targetNotional = Math.min(\n    equityUsdt * PAPER.tradeNotionalFraction,\n    PAPER.maxTradeNotionalUsdt\n  );\n  const availableNotional = Math.max(equityUsdt - usedNotional, 0);\n  const notionalUsdt = Math.min(targetNotional, availableNotional);\n\n  if (notionalUsdt < 10) {\n    return {\n      type: \"entry_skipped\",\n      symbol: signal.symbol,\n      signal: signal.signal,\n      reason: \"Available paper notional is below 10 USDT\",\n    };\n  }\n\n  const quantity = notionalUsdt / signal.close_price;\n  const openFeeUsdt = notionalUsdt * PAPER.feeRatePerSide;\n  state.cashUsdt -= openFeeUsdt;\n\n  const position = {\n    symbol: signal.symbol,\n    strategy: signal.strategy,\n    side: signal.side,\n    entry_time: signal.bar_close_time,\n    entry_bar_open_time_ms: signal.bar_open_time_ms,\n    entry_price: signal.close_price,\n    quantity,\n    notional_usdt: notionalUsdt,\n    stop_loss_price: signal.stop_loss_price,\n    take_profit_price: signal.take_profit_price,\n    max_hold_bars: signal.max_hold_bars,\n    open_fee_usdt: openFeeUsdt,\n    opened_at: new Date().toISOString(),\n  };\n\n  state.positions[signal.symbol] = position;\n\n  const event = {\n    type: \"trade_opened\",\n    symbol: signal.symbol,\n    strategy: signal.strategy,\n    side: signal.side,\n    entry_time: position.entry_time,\n    entry_price: round(position.entry_price),\n    quantity: round(position.quantity),\n    notional_usdt: round(position.notional_usdt, 2),\n    stop_loss_price: round(position.stop_loss_price),\n    take_profit_price: round(position.take_profit_price),\n    open_fee_usdt: round(openFeeUsdt, 4),\n  };\n\n  state.events.push({ ...event, event_time: new Date().toISOString() });\n  return event;\n}\n\nfunction maybeExitPosition(state, signal) {\n  const position = state.positions[signal.symbol];\n  if (!position) return null;\n\n  let exitPrice = null;\n  let exitReason = null;\n\n  if (position.side === \"LONG\") {\n    if (signal.low_price <= position.stop_loss_price) {\n      exitPrice = position.stop_loss_price;\n      exitReason = \"stop_loss\";\n    } else if (signal.high_price >= position.take_profit_price) {\n      exitPrice = position.take_profit_price;\n      exitReason = \"take_profit\";\n    }\n  } else {\n    if (signal.high_price >= position.stop_loss_price) {\n      exitPrice = position.stop_loss_price;\n      exitReason = \"stop_loss\";\n    } else if (signal.low_price <= position.take_profit_price) {\n      exitPrice = position.take_profit_price;\n      exitReason = \"take_profit\";\n    }\n  }\n\n  const heldBars = Math.floor(\n    (signal.bar_open_time_ms - position.entry_bar_open_time_ms) / STRATEGY.timeframeMs\n  );\n\n  if (!exitReason && heldBars >= position.max_hold_bars) {\n    exitPrice = signal.close_price;\n    exitReason = \"time_exit\";\n  }\n\n  if (!exitReason) return null;\n  return closePosition(state, position, exitPrice, signal.bar_close_time, exitReason);\n}\n\nfunction marksFromSignals(signals) {\n  const marks = {};\n  for (const signal of signals) {\n    if (signal.symbol && Number.isFinite(signal.close_price)) {\n      marks[signal.symbol] = signal.close_price;\n    }\n  }\n  return marks;\n}\n\nfunction accountSummary(state, signals) {\n  const marks = marksFromSignals(signals);\n  const positions = Object.values(state.positions);\n  const unrealizedPnlUsdt = positions.reduce(\n    (sum, position) => sum + positionPnlUsdt(position, marks[position.symbol] || position.entry_price),\n    0\n  );\n  const equityUsdt = state.cashUsdt + unrealizedPnlUsdt;\n  const closedNetPnlUsdt = state.trades.reduce((sum, trade) => sum + trade.net_pnl_usdt, 0);\n\n  return {\n    type: \"paper_account\",\n    strategy: STRATEGY.name,\n    cash_usdt: round(state.cashUsdt, 2),\n    equity_usdt: round(equityUsdt, 2),\n    unrealized_pnl_usdt: round(unrealizedPnlUsdt, 2),\n    closed_net_pnl_usdt: round(closedNetPnlUsdt, 2),\n    closed_trades: state.trades.length,\n    open_positions: positions.length,\n    open_position_symbols: positions.map((position) => position.symbol),\n    updated_at: new Date().toISOString(),\n  };\n}\n\nconst staticData = $getWorkflowStaticData(\"global\");\nconst state = initState(staticData);\n\nconst signals = [];\nconst parseErrors = [];\nconst groupedKlines = normalizeInputItems(items);\n\nfor (const group of groupedKlines) {\n  try {\n    const { symbol, klines } = group.symbol ? group : getKlinesFromItem(group);\n    const bars = parseBinanceKlines(klines);\n    signals.push(buildSignal(symbol, bars));\n  } catch (error) {\n    parseErrors.push({\n      type: \"error\",\n      message: error.message,\n      item: group,\n    });\n  }\n}\n\nif (groupedKlines.length === 0) {\n  parseErrors.push({\n    type: \"error\",\n    message:\n      \"No Binance klines found. In the HTTP Request node, set Options > Put Response in Field to 'klines'.\",\n  });\n}\n\nconst events = [];\nconst freshSignals = [];\n\nfor (const signal of signals) {\n  if (!signal.bar_open_time_ms) {\n    freshSignals.push(signal);\n    continue;\n  }\n\n  const lastProcessed = state.lastProcessedBarBySymbol[signal.symbol];\n  if (lastProcessed === signal.bar_open_time_ms) {\n    freshSignals.push({\n      ...signal,\n      already_processed: true,\n      paper_action: \"none\",\n      paper_reason: \"This 4h bar was already processed\",\n    });\n    continue;\n  }\n\n  const exitEvent = maybeExitPosition(state, signal);\n  if (exitEvent) events.push(exitEvent);\n\n  const summaryBeforeEntry = accountSummary(state, signals);\n  if (signal.actionable && !state.positions[signal.symbol]) {\n    const entryEvent = openPosition(state, signal, summaryBeforeEntry.equity_usdt);\n    events.push(entryEvent);\n    freshSignals.push({\n      ...signal,\n      paper_action: entryEvent.type,\n      paper_reason: entryEvent.reason || null,\n    });\n  } else {\n    freshSignals.push({\n      ...signal,\n      paper_action: exitEvent ? exitEvent.type : \"none\",\n      paper_reason: signal.actionable ? \"Position already open or exit handled first\" : null,\n    });\n  }\n\n  state.lastProcessedBarBySymbol[signal.symbol] = signal.bar_open_time_ms;\n}\n\nconst summary = accountSummary(state, freshSignals);\nconst openPositions = Object.values(state.positions).map((position) => ({\n  type: \"open_position\",\n  ...position,\n  entry_price: round(position.entry_price),\n  quantity: round(position.quantity),\n  notional_usdt: round(position.notional_usdt, 2),\n  stop_loss_price: round(position.stop_loss_price),\n  take_profit_price: round(position.take_profit_price),\n  open_fee_usdt: round(position.open_fee_usdt, 4),\n}));\n\nfunction withAccountColumns(row) {\n  return {\n    cash_usdt: summary.cash_usdt,\n    equity_usdt: summary.equity_usdt,\n    unrealized_pnl_usdt: summary.unrealized_pnl_usdt,\n    closed_net_pnl_usdt: summary.closed_net_pnl_usdt,\n    closed_trades: summary.closed_trades,\n    open_positions: summary.open_positions,\n    ...row,\n  };\n}\n\nreturn [\n  { json: summary },\n  ...freshSignals.map((signal) => ({ json: withAccountColumns({ type: \"signal\", ...signal }) })),\n  ...events.map((event) => ({ json: withAccountColumns(event) })),\n  ...openPositions.map((position) => ({ json: withAccountColumns(position) })),\n  ...parseErrors.map((error) => ({ json: withAccountColumns(error) })),\n];\n"
+      },
+      "id": "ba1f209f-8e1d-491c-8346-ad6baf72770c",
+      "name": "Paper trade code",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -260,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "/**\n * n8n Code node: format paper-trading events for Telegram alerts.\n *\n * Code node mode: Run Once for All Items\n *\n * Place this after `binance_paper_trader_from_klines_n8n.js`.\n * Then connect it to a Telegram node:\n *   Resource: Message\n *   Operation: Send Message\n *   Chat ID: your Telegram chat id\n *   Text: ={{$json.telegram_text}}\n *   Additional Fields > Parse Mode: HTML\n */\n\nconst ALERT_ON_OPEN = true;\nconst ALERT_ON_CLOSE = true;\nconst ALERT_ON_ENTRY_SKIPPED = false;\nconst ALERT_ON_ACCOUNT_SUMMARY = false;\nconst DEDUPE_ALERTS = true;\n\nfunction fmt(value, decimals = 2) {\n  const number = Number(value);\n  if (!Number.isFinite(number)) return \"-\";\n  return number.toFixed(decimals);\n}\n\nfunction htmlEscape(value) {\n  return String(value ?? \"\")\n    .replace(/&/g, \"&amp;\")\n    .replace(/</g, \"&lt;\")\n    .replace(/>/g, \"&gt;\");\n}\n\nfunction eventKey(row) {\n  return [\n    row.type,\n    row.symbol,\n    row.side,\n    row.entry_time,\n    row.exit_time,\n    row.entry_price,\n    row.exit_price,\n    row.exit_reason,\n  ].join(\"|\");\n}\n\nfunction tradeOpenedMessage(row) {\n  return [\n    `🟢 <b>Paper trade opened</b>`,\n    `<b>${htmlEscape(row.symbol)}</b> ${htmlEscape(row.side)}`,\n    `Entry: <code>${fmt(row.entry_price, 8)}</code>`,\n    `Notional: <code>${fmt(row.notional_usdt, 2)} USDT</code>`,\n    `Qty: <code>${fmt(row.quantity, 8)}</code>`,\n    `Stop: <code>${fmt(row.stop_loss_price, 8)}</code>`,\n    `Target: <code>${fmt(row.take_profit_price, 8)}</code>`,\n    `Fee: <code>${fmt(row.open_fee_usdt, 4)} USDT</code>`,\n    `Strategy: <code>${htmlEscape(row.strategy)}</code>`,\n  ].join(\"\\n\");\n}\n\nfunction tradeClosedMessage(row) {\n  const pnl = Number(row.net_pnl_usdt);\n  const icon = pnl >= 0 ? \"✅\" : \"🔴\";\n  return [\n    `${icon} <b>Paper trade closed</b>`,\n    `<b>${htmlEscape(row.symbol)}</b> ${htmlEscape(row.side)}`,\n    `Entry: <code>${fmt(row.entry_price, 8)}</code>`,\n    `Exit: <code>${fmt(row.exit_price, 8)}</code>`,\n    `Reason: <code>${htmlEscape(row.exit_reason)}</code>`,\n    `Gross PnL: <code>${fmt(row.gross_pnl_usdt, 4)} USDT</code>`,\n    `Net PnL: <code>${fmt(row.net_pnl_usdt, 4)} USDT</code>`,\n    `Return: <code>${fmt(row.pnl_percent_on_notional, 4)}%</code>`,\n    `Equity: <code>${fmt(row.equity_usdt, 2)} USDT</code>`,\n  ].join(\"\\n\");\n}\n\nfunction entrySkippedMessage(row) {\n  return [\n    `⚠️ <b>Paper entry skipped</b>`,\n    `<b>${htmlEscape(row.symbol)}</b> ${htmlEscape(row.signal || \"\")}`,\n    `Reason: ${htmlEscape(row.reason || row.paper_reason || \"-\")}`,\n  ].join(\"\\n\");\n}\n\nfunction accountSummaryMessage(row) {\n  return [\n    `📊 <b>Paper account</b>`,\n    `Cash: <code>${fmt(row.cash_usdt, 2)} USDT</code>`,\n    `Equity: <code>${fmt(row.equity_usdt, 2)} USDT</code>`,\n    `Unrealized: <code>${fmt(row.unrealized_pnl_usdt, 2)} USDT</code>`,\n    `Closed PnL: <code>${fmt(row.closed_net_pnl_usdt, 2)} USDT</code>`,\n    `Closed trades: <code>${row.closed_trades ?? 0}</code>`,\n    `Open positions: <code>${row.open_positions ?? 0}</code>`,\n  ].join(\"\\n\");\n}\n\nconst staticData = $getWorkflowStaticData(\"global\");\nstaticData.telegramAlertKeys ||= {};\n\nconst output = [];\n\nfor (const item of items) {\n  const row = item.json || item;\n  let telegramText = null;\n\n  if (ALERT_ON_OPEN && row.type === \"trade_opened\") {\n    telegramText = tradeOpenedMessage(row);\n  } else if (ALERT_ON_CLOSE && row.type === \"trade_closed\") {\n    telegramText = tradeClosedMessage(row);\n  } else if (ALERT_ON_ENTRY_SKIPPED && row.type === \"entry_skipped\") {\n    telegramText = entrySkippedMessage(row);\n  } else if (ALERT_ON_ACCOUNT_SUMMARY && row.type === \"paper_account\") {\n    telegramText = accountSummaryMessage(row);\n  }\n\n  if (!telegramText) continue;\n\n  const key = eventKey(row);\n  if (DEDUPE_ALERTS && staticData.telegramAlertKeys[key]) continue;\n  staticData.telegramAlertKeys[key] = new Date().toISOString();\n\n  output.push({\n    json: {\n      ...row,\n      telegram_text: telegramText,\n      telegram_parse_mode: \"HTML\",\n    },\n  });\n}\n\nreturn output;\n"
+      },
+      "id": "7fe1696b-247f-4876-81d2-094687a40a71",
+      "name": "Telegram alert formatter code",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -40,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{$env.TELEGRAM_CHAT_ID}}",
+        "text": "={{$json.telegram_text}}",
+        "additionalFields": {
+          "parse_mode": "HTML"
+        }
+      },
+      "id": "e735a39f-b40a-4ff0-9766-2c5780069f12",
+      "name": "Send Telegram alert",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        180,
+        240
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Build Binance requests",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Binance requests": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Paper trade code",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Paper trade code": {
+      "main": [
+        [
+          {
+            "node": "Telegram alert formatter code",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram alert formatter code": {
+      "main": [
+        [
+          {
+            "node": "Send Telegram alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "f1caecf3-9270-4af0-9bde-493ed81cb74f",
+  "meta": {},
+  "tags": []
+}
