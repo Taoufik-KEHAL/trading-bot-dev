@@ -1,0 +1,259 @@
+{
+  "name": "binance_all_pairs_spot_1m_exit_and_6h_summary",
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "nodes": [
+    {
+      "id": "cron_scan_15m",
+      "name": "Cron Scan 15m",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [200, 120],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 15
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "cron_exit_1m",
+      "name": "Cron Exit 1m",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [200, 420],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 1
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "cron_summary_6h",
+      "name": "Cron Summary 6h",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [200, 700],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 6
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "http_exchange_info",
+      "name": "Binance Exchange Info",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 80],
+      "parameters": {
+        "url": "https://api.binance.com/api/v3/exchangeInfo",
+        "options": {}
+      }
+    },
+    {
+      "id": "http_ticker_24h",
+      "name": "Binance 24h Ticker",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 180],
+      "parameters": {
+        "url": "https://api.binance.com/api/v3/ticker/24hr",
+        "options": {}
+      }
+    },
+    {
+      "id": "code_filter_symbols",
+      "name": "Filter USDT Spot Symbols",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [720, 130],
+      "parameters": {
+        "language": "javaScript",
+        "jsCode": "// Input 0: exchangeInfo, input 1: ticker24hr\nconst exchangeInfo = $input.all(0, 0)[0]?.json;\nconst tickers = $input.all(1, 0).map(i => i.json);\nif (!exchangeInfo?.symbols) throw new Error('Missing exchangeInfo.symbols');\nconst quoteVolumeBySymbol = Object.fromEntries(tickers.map(t => [t.symbol, Number(t.quoteVolume || 0)]));\nconst out = [];\nfor (const s of exchangeInfo.symbols) {\n  if (s.status !== 'TRADING') continue;\n  if (s.isSpotTradingAllowed !== true) continue;\n  if (s.quoteAsset !== 'USDT') continue;\n  if (String(s.symbol).includes('UPUSDT') || String(s.symbol).includes('DOWNUSDT')) continue;\n  const vol = quoteVolumeBySymbol[s.symbol] ?? 0;\n  if (vol < 5_000_000) continue;\n  out.push({ json: { symbol: s.symbol } });\n}\nreturn out;"
+      }
+    },
+    {
+      "id": "split_symbols",
+      "name": "Split Symbols",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [980, 130],
+      "parameters": {
+        "batchSize": 40
+      }
+    },
+    {
+      "id": "http_klines",
+      "name": "Fetch Klines 15m",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1220, 130],
+      "parameters": {
+        "url": "=https://api.binance.com/api/v3/klines?symbol={{$json.symbol}}&interval=15m&limit=300",
+        "options": {}
+      }
+    },
+    {
+      "id": "code_strategy",
+      "name": "Strategy + Entries",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1460, 130],
+      "parameters": {
+        "language": "javaScript",
+        "jsCode": "// TODO: paste your strategy code from workflows/binance_paper_trader_from_klines_n8n.js\n// Required output rows: signal / trade_opened / entry_skipped / risk_guard / paper_account\nreturn items;"
+      }
+    },
+    {
+      "id": "pg_upsert_events",
+      "name": "Postgres Upsert State & Events",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1700, 130],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Use queries from sql_queries_n8n.sql\nSELECT 1;"
+      },
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_WITH_POSTGRES_CREDENTIAL_ID",
+          "name": "postgres"
+        }
+      }
+    },
+    {
+      "id": "tg_trade_alerts",
+      "name": "Telegram Trade Alerts",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [1940, 130],
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{$env.TELEGRAM_CHAT_ID}}",
+        "text": "={{$json.message}}"
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "REPLACE_WITH_TELEGRAM_CREDENTIAL_ID",
+          "name": "telegram"
+        }
+      }
+    },
+    {
+      "id": "pg_load_open",
+      "name": "Postgres Load Open Positions",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [460, 420],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT * FROM bot_positions WHERE status='OPEN';"
+      }
+    },
+    {
+      "id": "code_exit_check",
+      "name": "Exit Check 1m",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [720, 420],
+      "parameters": {
+        "language": "javaScript",
+        "jsCode": "// TODO: For each open position, fetch mark/last price and evaluate SL/TP/trailing/time-exit\n// Output trade_closed events when exit criteria met.\nreturn items;"
+      }
+    },
+    {
+      "id": "pg_write_exits",
+      "name": "Postgres Write Exits",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [980, 420],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Use close/update statements from sql_queries_n8n.sql\nSELECT 1;"
+      }
+    },
+    {
+      "id": "tg_exit_alerts",
+      "name": "Telegram Exit Alerts",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [1220, 420],
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{$env.TELEGRAM_CHAT_ID}}",
+        "text": "={{$json.message}}"
+      }
+    },
+    {
+      "id": "pg_summary",
+      "name": "Postgres Account Summary",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [460, 700],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT * FROM bot_account_state WHERE id = 1;"
+      }
+    },
+    {
+      "id": "code_summary_msg",
+      "name": "Format 6h Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [720, 700],
+      "parameters": {
+        "language": "javaScript",
+        "jsCode": "const s = items[0]?.json ?? {};\nreturn [{json:{message:`📊 6H SUMMARY\\nCash: $${s.cash_usdt}\\nEquity: $${s.equity_usdt}\\nClosed PnL: $${s.closed_net_pnl_usdt}\\nUpdated: ${s.updated_at}`}}];"
+      }
+    },
+    {
+      "id": "tg_6h_summary",
+      "name": "Telegram 6h Summary",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [980, 700],
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{$env.TELEGRAM_CHAT_ID}}",
+        "text": "={{$json.message}}"
+      }
+    }
+  ],
+  "connections": {
+    "Cron Scan 15m": {"main": [[{"node": "Binance Exchange Info", "type": "main", "index": 0}, {"node": "Binance 24h Ticker", "type": "main", "index": 0}]]},
+    "Binance Exchange Info": {"main": [[{"node": "Filter USDT Spot Symbols", "type": "main", "index": 0}]]},
+    "Binance 24h Ticker": {"main": [[{"node": "Filter USDT Spot Symbols", "type": "main", "index": 1}]]},
+    "Filter USDT Spot Symbols": {"main": [[{"node": "Split Symbols", "type": "main", "index": 0}]]},
+    "Split Symbols": {"main": [[{"node": "Fetch Klines 15m", "type": "main", "index": 0}]]},
+    "Fetch Klines 15m": {"main": [[{"node": "Strategy + Entries", "type": "main", "index": 0}]]},
+    "Strategy + Entries": {"main": [[{"node": "Postgres Upsert State & Events", "type": "main", "index": 0}]]},
+    "Postgres Upsert State & Events": {"main": [[{"node": "Telegram Trade Alerts", "type": "main", "index": 0}]]},
+    "Cron Exit 1m": {"main": [[{"node": "Postgres Load Open Positions", "type": "main", "index": 0}]]},
+    "Postgres Load Open Positions": {"main": [[{"node": "Exit Check 1m", "type": "main", "index": 0}]]},
+    "Exit Check 1m": {"main": [[{"node": "Postgres Write Exits", "type": "main", "index": 0}]]},
+    "Postgres Write Exits": {"main": [[{"node": "Telegram Exit Alerts", "type": "main", "index": 0}]]},
+    "Cron Summary 6h": {"main": [[{"node": "Postgres Account Summary", "type": "main", "index": 0}]]},
+    "Postgres Account Summary": {"main": [[{"node": "Format 6h Summary", "type": "main", "index": 0}]]},
+    "Format 6h Summary": {"main": [[{"node": "Telegram 6h Summary", "type": "main", "index": 0}]]}
+  }
+}
