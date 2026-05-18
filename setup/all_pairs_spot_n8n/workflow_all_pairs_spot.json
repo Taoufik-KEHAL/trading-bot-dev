@@ -1,5 +1,6 @@
 {
   "name": "binance_all_pairs_spot_1m_exit_and_6h_summary",
+
   "active": false,
   "settings": {
     "executionOrder": "v1"
@@ -256,4 +257,37 @@
     "Postgres Account Summary": {"main": [[{"node": "Format 6h Summary", "type": "main", "index": 0}]]},
     "Format 6h Summary": {"main": [[{"node": "Telegram 6h Summary", "type": "main", "index": 0}]]}
   }
+=======
+  "meta": {
+    "description": "Template n8n workflow: all USDT spot pair scan, 1-minute open-trade exit checks, Telegram trade alerts, 6-hour account summary.",
+    "version": 1
+  },
+  "schedules": [
+    {
+      "name": "scan_signals",
+      "cron": "*/15 * * * *",
+      "purpose": "Scan all filtered USDT spot pairs for new entries on completed 15m candles"
+    },
+    {
+      "name": "check_open_positions",
+      "cron": "* * * * *",
+      "purpose": "Re-evaluate exits every minute for currently open trades"
+    },
+    {
+      "name": "send_6h_summary",
+      "cron": "0 */6 * * *",
+      "purpose": "Send account performance summary to Telegram every 6 hours"
+    }
+  ],
+  "flow": [
+    "Cron(scan_signals) -> HTTP(Binance exchangeInfo + ticker24hr) -> Code(filter tradable USDT spot symbols) -> SplitInBatches -> HTTP(klines 15m + 1h) -> Code(strategy+entries+exits+risk) -> Postgres(upsert state + events) -> Telegram(trade alerts)",
+    "Cron(check_open_positions) -> Postgres(load open positions + latest price) -> Code(exit checks with stop/tp/trailing/time) -> Postgres(update positions + journal closes) -> Telegram(close alerts)",
+    "Cron(send_6h_summary) -> Postgres(aggregate account) -> Code(format summary) -> Telegram(summary message)"
+  ],
+  "notes": [
+    "Spot only: disable short entries.",
+    "Use batching (30-50 symbols per batch) to control CPU and API pressure.",  
+    "Keep per-trade risk small for $100 account; e.g. 0.5%."
+  ]
+
 }
